@@ -8,19 +8,19 @@ load helpers.network
 
 CHECKED_ROOTLESS=
 function setup() {
-    # None of these tests work rootless....
-    if is_rootless; then
-        # ...however, is that a genuine cast-in-stone limitation, or one
-        # that can some day be fixed? If one day some PR removes that
-        # restriction, fail loudly here, so the developer can enable tests.
-        if [[ -n "$CHECKED_ROOTLESS" ]]; then
-            run_podman '?' container checkpoint -l
-            is "$output" "Error: checkpointing a container requires root" \
-               "Confirming that rootless checkpoint doesn't work. If that changed, please reexamine this test file!"
-            CHECKED_ROOTLESS=y
-        fi
-        skip "checkpoint does not work rootless"
-    fi
+    # # None of these tests work rootless....
+    # if is_rootless; then
+    #     # ...however, is that a genuine cast-in-stone limitation, or one
+    #     # that can some day be fixed? If one day some PR removes that
+    #     # restriction, fail loudly here, so the developer can enable tests.
+    #     if [[ -n "$CHECKED_ROOTLESS" ]]; then
+    #         run_podman '?' container checkpoint -l
+    #         is "$output" "Error: checkpointing a container requires root" \
+    #            "Confirming that rootless checkpoint doesn't work. If that changed, please reexamine this test file!"
+    #         CHECKED_ROOTLESS=y
+    #     fi
+    #     skip "checkpoint does not work rootless"
+    # fi
 
     basic_setup
 

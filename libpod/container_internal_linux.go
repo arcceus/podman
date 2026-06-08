@@ -557,6 +557,26 @@ func (c *Container) setCgroupsPath(g *generate.Generator) error {
 	return nil
 }
 
+// prepareRestoreCgroupNamespace adjusts the OCI spec for CRIU restore. Rootless
+// restore does not reliably recreate a private cgroup namespace; using the host
+// cgroup namespace matches the restored process and allows crun exec to work.
+func (c *Container) prepareRestoreCgroupNamespace(g *generate.Generator) error {
+	if c.config.NoCgroups {
+		return nil
+	}
+	if err := g.RemoveLinuxNamespace(string(spec.CgroupNamespace)); err != nil {
+		return err
+	}
+	g.RemoveMount("/sys/fs/cgroup")
+	g.AddMount(spec.Mount{
+		Destination: "/sys/fs/cgroup",
+		Type:        define.TypeBind,
+		Source:      "/sys/fs/cgroup",
+		Options:     []string{define.TypeBind, "private", "rw"},
+	})
+	return c.setCgroupsPath(g)
+}
+
 // addSpecialDNS adds special dns servers for pasta
 func (c *Container) addSpecialDNS(nameservers []string) []string {
 	switch {

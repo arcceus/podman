@@ -12,7 +12,7 @@ import (
 	"go.podman.io/podman/v6/cmd/podman/utils"
 	"go.podman.io/podman/v6/cmd/podman/validate"
 	"go.podman.io/podman/v6/pkg/domain/entities"
-	"go.podman.io/podman/v6/pkg/rootless"
+	// "go.podman.io/podman/v6/pkg/rootless"
 )
 
 var (
@@ -99,9 +99,9 @@ func restore(cmd *cobra.Command, args []string) error {
 	args = utils.RemoveSlash(args)
 
 	podmanStart := time.Now()
-	if rootless.IsRootless() {
-		return fmt.Errorf("restoring a container requires root")
-	}
+	// if rootless.IsRootless() {
+	// 	return fmt.Errorf("restoring a container requires root")
+	// }
 
 	// Check if the container exists (#15055)
 	exists := &entities.BoolReport{Value: false}

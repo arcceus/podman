@@ -1248,6 +1248,12 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		ctr.state.ConmonPID = conmonPID
 	}
 
+	if restoreOptions != nil {
+		if err := r.reattachRestoredContainerCgroup(ctr); err != nil {
+			return 0, fmt.Errorf("reattach restored container cgroup: %w", err)
+		}
+	}
+
 	runtimeRestoreDuration := func() int64 {
 		if restoreOptions != nil && restoreOptions.PrintStats {
 			return time.Since(runtimeRestoreStarted).Microseconds()

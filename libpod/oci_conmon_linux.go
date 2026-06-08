@@ -169,6 +169,55 @@ func createUnitName(prefix string, name string) string {
 	return fmt.Sprintf("%s-%s.scope", prefix, name)
 }
 
+// reattachRestoredContainerCgroup moves a restored container process into the
+// libpod systemd scope cgroup that crun would have created on a normal start.
+// Rootless CRIU restore leaves the payload in the caller's cgroup and deletes
+// the original libpod scope during checkpoint.
+func (r *ConmonOCIRuntime) reattachRestoredContainerCgroup(ctr *Container) error {
+	if ctr.config.NoCgroups || ctr.CgroupManager() != config.SystemdCgroupsManager {
+		return nil
+	}
+	if ctr.state.PID <= 0 {
+		return nil
+	}
+
+	unitName := createUnitName("libpod", ctr.ID())
+	if cgroupPath, err := ctr.cGroupPath(); err == nil {
+		if strings.Contains(cgroupPath, unitName+"/container") {
+			return nil
+		}
+	}
+
+	cgroupParent := ctr.CgroupParent()
+	realCgroupParent := cgroupParent
+	splitParent := strings.Split(cgroupParent, "/")
+	if strings.HasSuffix(cgroupParent, ".slice") && len(splitParent) > 1 {
+		realCgroupParent = splitParent[len(splitParent)-1]
+	}
+
+	logrus.Debugf("Reattaching restored container %s (pid %d) to systemd scope %s", ctr.ID(), ctr.state.PID, unitName)
+	if err := systemd.RunUnderSystemdScope(ctr.state.PID, realCgroupParent, unitName); err != nil {
+		return fmt.Errorf("create libpod systemd scope: %w", err)
+	}
+
+	procPath := fmt.Sprintf("/proc/%d/cgroup", ctr.state.PID)
+	lines, err := os.ReadFile(procPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", procPath, err)
+	}
+	cgroupPath, err := parseCgroupPath(lines)
+	if err != nil {
+		return err
+	}
+	cgroupPath = strings.TrimPrefix(cgroupPath, "/")
+
+	if err := cgroups.MoveUnderCgroup(cgroupPath, "container", []uint32{uint32(ctr.state.PID)}); err != nil {
+		return fmt.Errorf("move restored container into %q subcgroup: %w", "container", err)
+	}
+
+	return nil
+}
+
 // moveConmonToCgroupAndSignal gets a container's cgroupParent and moves the conmon process to that cgroup
 // it then signals for conmon to start by sending nonce data down the start fd
 func (r *ConmonOCIRuntime) moveConmonToCgroupAndSignal(ctr *Container, cmd *exec.Cmd, startFd *os.File) error {

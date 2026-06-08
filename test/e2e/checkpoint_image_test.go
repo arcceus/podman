@@ -16,7 +16,7 @@ import (
 
 var _ = Describe("Podman checkpoint", func() {
 	BeforeEach(func() {
-		SkipIfRootless("checkpoint not supported in rootless mode")
+		// SkipIfRootless("checkpoint not supported in rootless mode")
 		// Check if the runtime implements checkpointing. Currently only
 		// runc's checkpoint/restore implementation is supported.
 		cmd := exec.Command(podmanTest.OCIRuntime, "checkpoint", "--help")
@@ -44,10 +44,22 @@ var _ = Describe("Podman checkpoint", func() {
 		checkpointImage := "alpine-checkpoint-" + strings.ToLower(RandomString(6))
 		containerName := "alpine-container-" + RandomString(6)
 
+		// Rootless requires bridge networking for static --ip (see run_staticip_test.go).
+		// Derive a unique /24 from GetSafeIPAddress() to avoid colliding with the
+		// host's default podman network (10.88.0.0/16).
+		safeIP := GetSafeIPAddress()
+		octets := strings.Split(safeIP, ".")
+		subnet := fmt.Sprintf("172.%s.%s.0/24", octets[2], octets[3])
+		ip := fmt.Sprintf("172.%s.%s.12", octets[2], octets[3])
+		netSession := podmanTest.PodmanExitCleanly("network", "create", "--subnet", subnet)
+		netName := netSession.OutputToString()
+		defer podmanTest.removeNetwork(netName)
+
 		localRunString := []string{
 			"run",
 			"-d",
-			"--ip", GetSafeIPAddress(),
+			"--network", netName,
+			"--ip", ip,
 			"--name", containerName,
 			ALPINE,
 			"top",

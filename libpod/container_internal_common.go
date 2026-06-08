@@ -1766,6 +1766,11 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 		return nil, 0, err
 	}
 
+	if err := c.prepareRestoreCgroupNamespace(&g); err != nil {
+		return nil, 0, fmt.Errorf("prepare cgroup namespace for restore: %w", err)
+	}
+	c.config.Spec = g.Config
+
 	// Save the OCI spec to disk
 	if err := c.saveSpec(g.Config); err != nil {
 		return nil, 0, err

@@ -33,7 +33,7 @@ func getRunString(input []string) []string {
 
 var _ = Describe("Podman checkpoint", func() {
 	BeforeEach(func() {
-		SkipIfRootless("checkpoint not supported in rootless mode")
+		// SkipIfRootless("checkpoint not supported in rootless mode")
 
 		// Check if the runtime implements checkpointing. Currently only
 		// runc's checkpoint/restore implementation is supported.
