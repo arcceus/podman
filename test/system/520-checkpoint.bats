@@ -196,6 +196,10 @@ function setup() {
 
     run_podman rm -t 0 -f $cid
     run_podman volume rm -f $volname
+
+    # Wipe the isolated --root storage (checkpointed container, volume, image).
+    # Rootless overlay layers use mapped UIDs; plain rm -rf in teardown fails.
+    run_podman $p_opts system reset -f
 }
 
 # FIXME: test --leave-running
