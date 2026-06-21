@@ -454,8 +454,10 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		// NewFromSpec() is deprecated according to its comment
 		// however the recommended replace just causes a nil map panic
 		g := generate.NewFromSpec(ctr.config.Spec)
-		g.RemoveMount("/dev/shm")
-		ctr.config.ShmDir = ""
+		if !ctr.hasHostIPC() {
+			g.RemoveMount("/dev/shm")
+			ctr.config.ShmDir = ""
+		}
 		g.RemoveMount("/etc/resolv.conf")
 		g.RemoveMount("/etc/hostname")
 		g.RemoveMount("/etc/hosts")

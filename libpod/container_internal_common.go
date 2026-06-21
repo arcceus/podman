@@ -1148,11 +1148,13 @@ func (c *Container) exportCheckpoint(options ContainerCheckpointOptions) error {
 
 	includeFiles := []string{
 		"artifacts",
-		metadata.DevShmCheckpointTar,
 		metadata.ConfigDumpFile,
 		metadata.SpecDumpFile,
 		metadata.NetworkStatusFile,
 		stats.StatsDump,
+	}
+	if !c.hasHostIPC() {
+		includeFiles = append(includeFiles, metadata.DevShmCheckpointTar)
 	}
 
 	if c.LogDriver() == define.KubernetesLogging ||
@@ -1265,6 +1267,25 @@ func (c *Container) exportCheckpoint(options ContainerCheckpointOptions) error {
 	return nil
 }
 
+// hasHostIPC returns true when the container shares the host's IPC
+// namespace (--ipc host). In this mode /dev/shm is the host's and
+// should not be checkpointed — root-owned files may be unreadable
+// by a rootless user, producing corrupted tarballs.
+func (c *Container) hasHostIPC() bool {
+	if c.config.IPCNsCtr != "" {
+		return false
+	}
+	if c.config.Spec == nil || c.config.Spec.Linux == nil {
+		return false
+	}
+	for _, ns := range c.config.Spec.Linux.Namespaces {
+		if ns.Type == spec.IPCNamespace {
+			return false
+		}
+	}
+	return true
+}
+
 func (c *Container) checkpointRestoreSupported(version int) error {
 	if err := criu.CheckForCriu(version); err != nil {
 		return err
@@ -1305,8 +1326,11 @@ func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointO
 		return nil, 0, err
 	}
 
-	// Keep the content of /dev/shm directory
-	if c.config.ShmDir != "" && c.state.BindMounts["/dev/shm"] == c.config.ShmDir {
+	// Keep the content of /dev/shm directory.
+	// With host IPC, /dev/shm is shared with the host; checkpointing
+	// it would capture host files, and root-owned files may not be
+	// readable by a rootless user, producing corrupted tarballs.
+	if c.config.ShmDir != "" && c.state.BindMounts["/dev/shm"] == c.config.ShmDir && !c.hasHostIPC() {
 		shmDirTarFileFullPath := filepath.Join(c.bundlePath(), metadata.DevShmCheckpointTar)
 
 		shmDirTarFile, err := os.Create(shmDirTarFileFullPath)
