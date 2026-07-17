@@ -124,6 +124,10 @@ func (r *Runtime) createNetNS(ctr *Container) (n string, q map[string]types.Stat
 	return netns, networkStatus, err
 }
 
+func (c *Container) prepareCheckpointNetworkForCheckpoint() (func() error, bool, error) {
+	return func() error { return nil }, false, nil
+}
+
 // Tear down a network namespace, undoing all state associated with it.
 func (r *Runtime) teardownNetNS(ctr *Container) error {
 	if err := r.unexposeMachinePorts(ctr.config.PortMappings); err != nil {

@@ -1174,6 +1174,7 @@ func (c *Container) exportCheckpoint(options ContainerCheckpointOptions) error {
 		if err != nil {
 			return fmt.Errorf("exporting root file-system diff for %q: %w", c.ID(), err)
 		}
+		rootFsChanges = filterCheckpointExportRootfsDiff(rootFsChanges)
 
 		addToTarFiles, err = crutils.CRCreateRootFsDiffTar(&rootFsChanges, c.state.Mountpoint, c.bundlePath())
 		if err != nil {
@@ -1296,6 +1297,17 @@ func (c *Container) checkpointRestoreSupported(version int) error {
 	return nil
 }
 
+func filterCheckpointExportRootfsDiff(changes []archive.Change) []archive.Change {
+	filtered := changes[:0]
+	for _, change := range changes {
+		if change.Path == "/sys/fs" || change.Path == "/sys/fs/cgroup" {
+			continue
+		}
+		filtered = append(filtered, change)
+	}
+	return filtered
+}
+
 func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointOptions) (*define.CRIUCheckpointRestoreStatistics, int64, error) {
 	if err := c.checkpointRestoreSupported(criu.MinCriuVersion); err != nil {
 		return nil, 0, err
@@ -1321,9 +1333,22 @@ func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointO
 	c.state.CheckpointLog = path.Join(c.bundlePath(), "dump.log")
 	c.state.CheckpointPath = c.CheckpointPath()
 
-	runtimeCheckpointDuration, err := c.ociRuntime.CheckpointContainer(c, options)
+	restoreCheckpointNetwork, checkpointNetworkLinkRemoved, err := c.prepareCheckpointNetworkForCheckpoint()
 	if err != nil {
 		return nil, 0, err
+	}
+
+	runtimeCheckpointDuration, err := c.ociRuntime.CheckpointContainer(c, options)
+	if err != nil {
+		if restoreErr := restoreCheckpointNetwork(); restoreErr != nil {
+			logrus.Errorf("Restoring checkpoint network for container %s after failed checkpoint: %v", c.ID(), restoreErr)
+		}
+		return nil, 0, err
+	}
+	if options.KeepRunning || options.PreCheckPoint {
+		if err := restoreCheckpointNetwork(); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// Keep the content of /dev/shm directory.
@@ -1392,7 +1417,10 @@ func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointO
 
 		// Clean up Storage and Network
 		if err := c.cleanup(ctx); err != nil {
-			return nil, 0, err
+			if !checkpointNetworkLinkRemoved || !isDeletedCheckpointNetworkLinkCleanupError(err) {
+				return nil, 0, err
+			}
+			logrus.Debugf("Ignoring checkpoint network cleanup error for container %s after deleting network link before CRIU dump: %v", c.ID(), err)
 		}
 	}
 
@@ -1443,6 +1471,12 @@ func (c *Container) checkpoint(ctx context.Context, options ContainerCheckpointO
 
 	c.state.FinishedTime = time.Now()
 	return criuStatistics, runtimeCheckpointDuration, c.save()
+}
+
+func isDeletedCheckpointNetworkLinkCleanupError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "failed to delete container veth") &&
+		strings.Contains(msg, "No such device")
 }
 
 func (c *Container) generateContainerSpec() error {

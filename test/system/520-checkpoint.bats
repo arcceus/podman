@@ -442,6 +442,50 @@ function setup() {
     run_podman network rm $netname
 }
 
+# bats test_tags=ci:parallel
+@test "podman checkpoint/restore repeated restore then import with systemd cgroup" {
+    skip_if_remote "podman-remote does not support --import option"
+
+    run_podman info --format "{{.Host.CgroupManager}}"
+    if [[ "$output" != "systemd" ]]; then
+        skip "test verifies systemd cgroup reattach after restore"
+    fi
+
+    local netname="net-$(safename)"
+    local subnet="$(random_rfc1918_subnet)"
+    local archive=$PODMAN_TMPDIR/checkpoint.tar.gz
+
+    run_podman network create --subnet "$subnet.0/24" $netname
+    run_podman run -d --stop-signal SIGKILL --network $netname $IMAGE tail -f /dev/null
+    local cid="$output"
+
+    run_podman container checkpoint $cid
+    is "$output" "$cid"
+    run_podman container restore $cid
+    is "$output" "$cid"
+
+    run_podman restart $cid
+    is "$output" "$cid"
+
+    run_podman container checkpoint $cid
+    is "$output" "$cid"
+    run_podman container restore --ignore-static-ip --ignore-static-mac $cid
+    is "$output" "$cid"
+
+    run_podman container checkpoint --export "$archive" $cid
+    is "$output" "$cid"
+    run_podman rm -t 0 -f $cid
+
+    run_podman container restore --import "$archive"
+    cid="$output"
+
+    run_podman inspect $cid --format "{{.State.Status}}:{{.State.Running}}"
+    is "$output" "running:true" "imported container should be running"
+
+    run_podman rm -t 0 -f $cid
+    run_podman network rm $netname
+}
+
 # rhbz#2177611 : podman breaks checkpoint/restore
 # CANNOT BE PARALLELIZED: --latest
 @test "podman checkpoint/restore the latest container" {

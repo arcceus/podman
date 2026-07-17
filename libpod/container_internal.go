@@ -1002,8 +1002,10 @@ func (c *Container) completeNetworkSetup() error {
 		return nil
 	}
 	if c.config.PostConfigureNetNS {
-		if err := c.syncContainer(); err != nil {
-			return err
+		if c.state.PID <= 0 {
+			if err := c.syncContainer(); err != nil {
+				return err
+			}
 		}
 		if err := c.runtime.setupNetNS(c); err != nil {
 			return err
@@ -2577,7 +2579,7 @@ func (c *Container) mount() (string, error) {
 		return "", fmt.Errorf("cannot mount container %s as it is being removed: %w", c.ID(), define.ErrCtrStateInvalid)
 	}
 
-	mountPoint, err := c.runtime.storageService.MountContainerImage(c.ID())
+	mountPoint, err := c.mountContainerImageWithRetry()
 	if err != nil {
 		return "", fmt.Errorf("mounting storage for container %s: %w", c.ID(), err)
 	}
@@ -2589,6 +2591,25 @@ func (c *Container) mount() (string, error) {
 		return "", fmt.Errorf("cannot chown %s to %d:%d: %w", mountPoint, c.RootUID(), c.RootGID(), err)
 	}
 	return mountPoint, nil
+}
+
+func (c *Container) mountContainerImageWithRetry() (string, error) {
+	const attempts = 6
+	var err error
+
+	for i := 0; i < attempts; i++ {
+		var mountPoint string
+
+		mountPoint, err = c.runtime.storageService.MountContainerImage(c.ID())
+		if err == nil || !errors.Is(err, syscall.EBUSY) {
+			return mountPoint, err
+		}
+
+		logrus.Debugf("Retrying storage mount for container %s after EBUSY: %v", c.ID(), err)
+		time.Sleep(time.Duration(50*(1<<i)) * time.Millisecond)
+	}
+
+	return "", err
 }
 
 // unmount unmounts the container's root filesystem
@@ -2665,11 +2686,59 @@ func (c *Container) prepareCheckpointExport() error {
 		logrus.Debugf("generating spec for container %q failed with %v", c.ID(), err)
 		return err
 	}
+	sanitizeCheckpointExportSpec(g.Config)
 	if _, err := metadata.WriteJSONFile(g.Config, c.bundlePath(), metadata.SpecDumpFile); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func sanitizeCheckpointExportSpec(ctrSpec *spec.Spec) {
+	if ctrSpec == nil || ctrSpec.Linux == nil {
+		return
+	}
+
+	cgroupMount := -1
+	for i, m := range ctrSpec.Mounts {
+		if m.Destination == "/sys/fs/cgroup" {
+			cgroupMount = i
+			break
+		}
+	}
+	if cgroupMount == -1 {
+		return
+	}
+
+	m := ctrSpec.Mounts[cgroupMount]
+	if m.Type != define.TypeBind || m.Source != "/sys/fs/cgroup" {
+		return
+	}
+	if hasNamespace(ctrSpec, spec.CgroupNamespace) {
+		return
+	}
+
+	ctrSpec.Mounts[cgroupMount] = spec.Mount{
+		Destination: "/sys/fs/cgroup",
+		Type:        "cgroup",
+		Source:      "cgroup",
+		Options:     []string{"rprivate", "nosuid", "noexec", "nodev", "relatime", "rw"},
+	}
+	ctrSpec.Linux.Namespaces = append(ctrSpec.Linux.Namespaces, spec.LinuxNamespace{
+		Type: spec.CgroupNamespace,
+	})
+}
+
+func hasNamespace(ctrSpec *spec.Spec, namespace spec.LinuxNamespaceType) bool {
+	if ctrSpec == nil || ctrSpec.Linux == nil {
+		return false
+	}
+	for _, ns := range ctrSpec.Linux.Namespaces {
+		if ns.Type == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // SortUserVolumes sorts the volumes specified for a container

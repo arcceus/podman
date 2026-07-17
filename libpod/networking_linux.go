@@ -101,6 +101,51 @@ func (r *Runtime) createNetNS(ctr *Container) (n string, q map[string]types.Stat
 	return ctrNS.Path(), networkStatus, err
 }
 
+func (c *Container) prepareCheckpointNetworkForCheckpoint() (func() error, bool, error) {
+	preparePostConfigureNetNS := c.config.PostConfigureNetNS && c.config.NetMode.IsBridge()
+	if (!c.config.NetMode.IsPasta() && !preparePostConfigureNetNS) || c.state.NetNS == "" {
+		return func() error { return nil }, false, nil
+	}
+
+	deletedLink := false
+	if err := netns.WithNetNSPath(c.state.NetNS, func(_ netns.NetNS) error {
+		links, err := netlink.LinkList()
+		if err != nil {
+			return err
+		}
+		for _, link := range links {
+			attrs := link.Attrs()
+			if attrs == nil || attrs.Name == "lo" {
+				continue
+			}
+			logrus.Debugf("Deleting network link %s before checkpointing container %s", attrs.Name, c.ID())
+			if err := netlink.LinkDel(link); err != nil {
+				return fmt.Errorf("delete checkpoint network link %s: %w", attrs.Name, err)
+			}
+			deletedLink = true
+		}
+		return nil
+	}); err != nil {
+		return nil, false, err
+	}
+
+	return func() error {
+		if !deletedLink {
+			return nil
+		}
+		if preparePostConfigureNetNS {
+			return c.completeNetworkSetup()
+		}
+		if err := c.runtime.setupPasta(c, c.state.NetNS); err != nil {
+			return err
+		}
+		if err := c.addHosts(); err != nil {
+			return err
+		}
+		return c.addResolvConf()
+	}, deletedLink, nil
+}
+
 // Configure the network namespace using the container process
 func (r *Runtime) setupNetNS(ctr *Container) error {
 	nsProcess := fmt.Sprintf("/proc/%d/ns/net", ctr.state.PID)
