@@ -1105,6 +1105,9 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		if restoreOptions.FileLocks {
 			args = append(args, "--runtime-opt", "--file-locks")
 		}
+		if ctr.config.IDMappings.AutoUserNs {
+			args = append(args, "--runtime-opt", "--external-userns")
+		}
 		if restoreOptions.Pod != "" {
 			mountLabel := ctr.config.MountLabel
 			processLabel := ctr.config.ProcessLabel
