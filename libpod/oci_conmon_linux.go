@@ -169,10 +169,22 @@ func createUnitName(prefix string, name string) string {
 	return fmt.Sprintf("%s-%s.scope", prefix, name)
 }
 
+func cgroupPathHasContainerScope(cgroupPath string, unitName string) bool {
+	components := strings.Split(strings.Trim(cgroupPath, "/"), "/")
+	for i := 0; i+1 < len(components); i++ {
+		if components[i] == unitName && components[i+1] == "container" {
+			return true
+		}
+	}
+	return false
+}
+
 // reattachRestoredContainerCgroup moves a restored container process into the
 // libpod systemd scope cgroup that crun would have created on a normal start.
 // Rootless CRIU restore leaves the payload in the caller's cgroup and deletes
-// the original libpod scope during checkpoint.
+// the original libpod scope during checkpoint. crun performs the delegated
+// placement before returning from restore; this remains a fallback for runtimes
+// that do not do so. It cannot repair cgroup FDs reopened by CRIU.
 func (r *ConmonOCIRuntime) reattachRestoredContainerCgroup(ctr *Container) error {
 	if ctr.config.NoCgroups || ctr.CgroupManager() != config.SystemdCgroupsManager {
 		return nil
@@ -182,8 +194,10 @@ func (r *ConmonOCIRuntime) reattachRestoredContainerCgroup(ctr *Container) error
 	}
 
 	unitName := createUnitName("libpod", ctr.ID())
-	if cgroupPath, err := ctr.cGroupPath(); err == nil {
-		if strings.Contains(cgroupPath, unitName+"/container") {
+	procPath := fmt.Sprintf("/proc/%d/cgroup", ctr.state.PID)
+	if lines, err := os.ReadFile(procPath); err == nil {
+		if cgroupPath, err := parseCgroupPath(lines); err == nil &&
+			cgroupPathHasContainerScope(cgroupPath, unitName) {
 			return nil
 		}
 	}
@@ -200,7 +214,6 @@ func (r *ConmonOCIRuntime) reattachRestoredContainerCgroup(ctr *Container) error
 		return fmt.Errorf("create libpod systemd scope: %w", err)
 	}
 
-	procPath := fmt.Sprintf("/proc/%d/cgroup", ctr.state.PID)
 	lines, err := os.ReadFile(procPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", procPath, err)

@@ -116,3 +116,38 @@ func TestParseCgroupPath(t *testing.T) {
 		})
 	}
 }
+
+func TestCgroupPathHasContainerScope(t *testing.T) {
+	unitName := "libpod-abc.scope"
+	tests := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{
+			name: "container subcgroup",
+			path: "/user.slice/libpod-abc.scope/container",
+			want: true,
+		},
+		{
+			name: "nested below container subcgroup",
+			path: "/user.slice/libpod-abc.scope/container/process",
+			want: true,
+		},
+		{
+			name: "similar scope name",
+			path: "/user.slice/libpod-abc.scope-extra/container",
+			want: false,
+		},
+		{
+			name: "similar subcgroup name",
+			path: "/user.slice/libpod-abc.scope/container-extra",
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, cgroupPathHasContainerScope(tt.path, unitName))
+		})
+	}
+}

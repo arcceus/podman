@@ -1252,6 +1252,9 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 	}
 
 	if restoreOptions != nil {
+		// crun has already restored cgroup FDs against the delegated target and
+		// placed the payload there. Keep the hook as a fallback for runtimes that
+		// only provide post-restore cgroup placement.
 		if err := r.reattachRestoredContainerCgroup(ctr); err != nil {
 			return 0, fmt.Errorf("reattach restored container cgroup: %w", err)
 		}

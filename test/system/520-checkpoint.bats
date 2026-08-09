@@ -111,6 +111,104 @@ function setup() {
     run_podman rm -t 0 -f $cid
 }
 
+function assert_cgroup_fds_in_container() {
+    local cid="$1"
+
+    run_podman exec "$cid" sh -c \
+        'test -s /tmp/cgroup-child.pid && \
+         child="$(cat /tmp/cgroup-child.pid)" && \
+         for pid in 1 "$child"; do \
+             test "$(readlink /proc/$pid/fd/9)" = /sys/fs/cgroup/cgroup.procs && \
+             test "$(readlink /proc/$pid/fd/10)" = /sys/fs/cgroup && \
+             test "$(stat -Lc "%d:%i" /proc/$pid/fd/9)" = \
+                  "$(stat -Lc "%d:%i" /sys/fs/cgroup/cgroup.procs)" && \
+             test "$(stat -Lc "%d:%i" /proc/$pid/fd/10)" = \
+                  "$(stat -Lc "%d:%i" /sys/fs/cgroup)"; \
+         done'
+}
+
+function assert_cgroup_mount_matches_delegated_path() {
+    local cid="$1"
+
+    run_podman inspect --format '{{.State.Pid}} {{.State.CgroupPath}}' "$cid"
+    local init_pid="${output%% *}"
+    local inspected_cgroup="${output#* }"
+    local actual_cgroup
+    actual_cgroup="$(sed -n 's/^0:://p' /proc/$init_pid/cgroup)"
+
+    assert "$init_pid" -gt 0 "container init pid"
+    assert "$inspected_cgroup" != "" "container cgroup path"
+    assert "$actual_cgroup" != "" "container actual cgroup path"
+    assert "$actual_cgroup" =~ "^${inspected_cgroup}(/.*)?$" \
+           "container process cgroup is below inspected cgroup"
+
+    local inspected_host_cgroup="/sys/fs/cgroup/${inspected_cgroup#/}"
+    local actual_host_cgroup="/sys/fs/cgroup/${actual_cgroup#/}"
+    run test -d "$inspected_host_cgroup" -a -d "$actual_host_cgroup"
+    assert "$status" -eq 0 "inspected and actual cgroups exist on host"
+
+    local container_root_stat
+    local host_root_stat
+    local inspected_stat
+    local actual_stat
+    local delegated_cgroup
+    container_root_stat="$(stat -Lc "%d:%i" /proc/$init_pid/root/sys/fs/cgroup)"
+    host_root_stat="$(stat -Lc "%d:%i" /sys/fs/cgroup)"
+    inspected_stat="$(stat -Lc "%d:%i" "$inspected_host_cgroup")"
+    actual_stat="$(stat -Lc "%d:%i" "$actual_host_cgroup")"
+
+    run test "$container_root_stat" != "$host_root_stat"
+    assert "$status" -eq 0 "container cgroup mount root is not the host cgroup root"
+
+    if [[ "$container_root_stat" = "$actual_stat" ]]; then
+        delegated_cgroup="$actual_host_cgroup"
+    elif [[ "$container_root_stat" = "$inspected_stat" ]]; then
+        delegated_cgroup="$inspected_host_cgroup"
+    else
+        run false
+        assert "$status" -eq 0 "container cgroup mount root is delegated cgroup"
+    fi
+
+    run test "$(stat -Lc "%d:%i" /proc/$init_pid/root/sys/fs/cgroup/cgroup.procs)" = \
+             "$(stat -Lc "%d:%i" "$delegated_cgroup/cgroup.procs")"
+    assert "$status" -eq 0 "container cgroup.procs is delegated cgroup control file"
+}
+
+# The cgroup mount is deliberately opened from inside the container. A
+# post-restore cgroup placement check is insufficient: CRIU must reopen both
+# the cgroup directory and a cgroup control-file descriptor against the
+# runtime-owned delegated hierarchy for multiple processes and cgroup managers.
+# bats test_tags=ci:parallel
+@test "podman checkpoint/restore preserves rootless cgroup FDs" {
+    if ! is_rootless; then
+        skip "test covers the rootless cgroup mount contract"
+    fi
+    if ! is_cgroupsv2; then
+        skip "test covers unified cgroup rootless restore"
+    fi
+
+    for cgm in systemd cgroupfs; do
+        run_podman --cgroup-manager="$cgm" info --format '{{.Host.CgroupManager}}'
+        is "$output" "$cgm" "selected cgroup manager"
+
+        run_podman --cgroup-manager="$cgm" run -d --network=none $IMAGE sh -c \
+            'exec 9</sys/fs/cgroup/cgroup.procs; exec 10</sys/fs/cgroup; \
+             (while :; do sleep 1; done) & echo $! >/tmp/cgroup-child.pid; \
+             while :; do sleep 1; done'
+        local cid="$output"
+
+        assert_cgroup_fds_in_container "$cid"
+
+        run_podman --cgroup-manager="$cgm" container checkpoint "$cid"
+        run_podman --cgroup-manager="$cgm" container restore "$cid"
+
+        assert_cgroup_fds_in_container "$cid"
+        assert_cgroup_mount_matches_delegated_path "$cid"
+
+        run_podman --cgroup-manager="$cgm" rm -t 0 -f "$cid"
+    done
+}
+
 # CANNOT BE PARALLELIZED: checkpoint -a
 @test "podman checkpoint/restore print IDs or raw input" {
     # checkpoint/restore -a must print the IDs
@@ -234,7 +332,7 @@ function setup() {
     run_podman wait $cid
 
     run_podman logs $cid
-    trim=$(sed -z -e 's/[\r\n]\+//g' <<<"$output")
+    trim=$(grep -E '^(READY|[123])$' <<<"$output" | sed -z -e 's/[\r\n]\+//g')
     is "$trim" "READY123123" "File lock restored"
 
     run_podman rm $cid

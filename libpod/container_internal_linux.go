@@ -344,7 +344,9 @@ func (c *Container) expectPodCgroup() (bool, error) {
 	}
 }
 
-// Get cgroup path in a format suitable for the OCI spec
+// Get cgroup path in a format suitable for the OCI spec. During restore crun
+// creates the delegated cgroup represented by this path before CRIU reopens
+// process cgroup descriptors.
 func (c *Container) getOCICgroupPath() (string, error) {
 	cgroupManager := c.CgroupManager()
 	switch {
@@ -560,6 +562,8 @@ func (c *Container) setCgroupsPath(g *generate.Generator) error {
 // prepareRestoreCgroupNamespace adjusts the OCI spec for CRIU restore. Rootless
 // restore does not reliably recreate a private cgroup namespace; using the host
 // cgroup namespace matches the restored process and allows crun exec to work.
+// The normal cgroup mount remains in the spec; crun registers it as an external
+// mount backed by the delegated target before CRIU reopens process FDs.
 func (c *Container) prepareRestoreCgroupNamespace(g *generate.Generator) error {
 	if c.config.NoCgroups {
 		return nil
@@ -567,13 +571,6 @@ func (c *Container) prepareRestoreCgroupNamespace(g *generate.Generator) error {
 	if err := g.RemoveLinuxNamespace(string(spec.CgroupNamespace)); err != nil {
 		return err
 	}
-	g.RemoveMount("/sys/fs/cgroup")
-	g.AddMount(spec.Mount{
-		Destination: "/sys/fs/cgroup",
-		Type:        define.TypeBind,
-		Source:      "/sys/fs/cgroup",
-		Options:     []string{define.TypeBind, "private", "rw"},
-	})
 	return c.setCgroupsPath(g)
 }
 
