@@ -212,3 +212,30 @@ func Test_resultToBasicNetworkConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckpointNetworkLinkNamesFromStatus(t *testing.T) {
+	networkStatus := map[string]types.StatusBlock{
+		"podman1": {
+			Interfaces: map[string]types.NetInterface{
+				"eth0": {},
+				"lo":   {},
+				"":     {},
+			},
+		},
+		"podman2": {
+			Interfaces: map[string]types.NetInterface{
+				"net1": {},
+			},
+		},
+		"empty": {},
+	}
+
+	linkNames := checkpointNetworkLinkNamesFromStatus(networkStatus)
+	expected := map[string]struct{}{
+		"eth0": {},
+		"net1": {},
+	}
+	if !reflect.DeepEqual(linkNames, expected) {
+		t.Fatalf("expected link names %v, got %v", expected, linkNames)
+	}
+}

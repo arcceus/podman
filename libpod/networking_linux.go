@@ -107,6 +107,19 @@ func (c *Container) prepareCheckpointNetworkForCheckpoint() (func() error, bool,
 		return func() error { return nil }, false, nil
 	}
 
+	linkNames := map[string]struct{}{}
+	if preparePostConfigureNetNS {
+		linkNames = checkpointNetworkLinkNamesFromStatus(c.getNetworkStatus())
+		for network, status := range c.getNetworkStatus() {
+			if len(status.Interfaces) == 0 {
+				logrus.Debugf("Network %s has no checkpointable interface status for container %s", network, c.ID())
+			}
+		}
+		if len(linkNames) == 0 {
+			return nil, false, fmt.Errorf("cannot determine checkpoint network links for container %s from network status", c.ID())
+		}
+	}
+
 	deletedLink := false
 	if err := netns.WithNetNSPath(c.state.NetNS, func(_ netns.NetNS) error {
 		links, err := netlink.LinkList()
@@ -116,6 +129,15 @@ func (c *Container) prepareCheckpointNetworkForCheckpoint() (func() error, bool,
 		for _, link := range links {
 			attrs := link.Attrs()
 			if attrs == nil || attrs.Name == "lo" {
+				continue
+			}
+			if preparePostConfigureNetNS {
+				if _, ok := linkNames[attrs.Name]; !ok {
+					logrus.Debugf("Keeping non-Podman network link %s before checkpointing container %s", attrs.Name, c.ID())
+					continue
+				}
+			} else if c.config.NetMode.IsPasta() && !isPastaCheckpointNetworkLink(link) {
+				logrus.Debugf("Keeping non-pasta network link %s of type %s before checkpointing container %s", attrs.Name, link.Type(), c.ID())
 				continue
 			}
 			logrus.Debugf("Deleting network link %s before checkpointing container %s", attrs.Name, c.ID())
@@ -144,6 +166,28 @@ func (c *Container) prepareCheckpointNetworkForCheckpoint() (func() error, bool,
 		}
 		return c.addResolvConf()
 	}, deletedLink, nil
+}
+
+func checkpointNetworkLinkNamesFromStatus(networkStatus map[string]types.StatusBlock) map[string]struct{} {
+	linkNames := map[string]struct{}{}
+	for _, status := range networkStatus {
+		for name := range status.Interfaces {
+			if name == "" || name == "lo" {
+				continue
+			}
+			linkNames[name] = struct{}{}
+		}
+	}
+	return linkNames
+}
+
+func isPastaCheckpointNetworkLink(link netlink.Link) bool {
+	switch link.Type() {
+	case "tuntap", "tun", "tap":
+		return true
+	default:
+		return false
+	}
 }
 
 // Configure the network namespace using the container process
