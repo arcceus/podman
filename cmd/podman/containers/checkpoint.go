@@ -15,7 +15,6 @@ import (
 	"go.podman.io/podman/v6/cmd/podman/validate"
 	"go.podman.io/podman/v6/pkg/criu"
 	"go.podman.io/podman/v6/pkg/domain/entities"
-	// "go.podman.io/podman/v6/pkg/rootless"
 	"go.podman.io/storage/pkg/archive"
 )
 
@@ -107,9 +106,6 @@ func checkpoint(cmd *cobra.Command, args []string) error {
 	} else {
 		checkpointOptions.Compression = archive.Zstd
 	}
-	// if rootless.IsRootless() {
-	// 	return errors.New("checkpointing a container requires root")
-	// }
 	if checkpointOptions.Export == "" && checkpointOptions.IgnoreRootFS {
 		return errors.New("--ignore-rootfs can only be used with --export")
 	}
