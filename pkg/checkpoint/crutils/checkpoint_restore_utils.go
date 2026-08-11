@@ -249,6 +249,14 @@ func CRRuntimeSupportsPodCheckpointRestore(runtimePath string) bool {
 	return false
 }
 
+// CRRuntimeSupportsExternalUsernsRestore tests if the runtime can create the
+// restore user namespace itself and pass it to CRIU.
+func CRRuntimeSupportsExternalUsernsRestore(runtimePath string) bool {
+	cmd := exec.Command(runtimePath, "restore", "--help")
+	out, _ := cmd.CombinedOutput()
+	return bytes.Contains(out, []byte("--external-userns"))
+}
+
 // CRGetRuntimeFromArchive extracts the checkpoint metadata from the
 // given checkpoint archive and returns the runtime used to create
 // the given checkpoint archive.

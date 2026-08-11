@@ -195,6 +195,11 @@ func (r *MissingRuntime) SupportsKVM() bool {
 	return false
 }
 
+// SupportsExternalUsernsRestore returns false as there is no runtime to restore containers.
+func (r *MissingRuntime) SupportsExternalUsernsRestore() bool {
+	return false
+}
+
 // AttachSocketPath does not work as there is no runtime to attach to.
 // (Theoretically we could follow ExitFilePath but there is no guarantee the
 // container is running and thus has an attach socket...)

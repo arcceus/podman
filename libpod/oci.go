@@ -130,6 +130,9 @@ type OCIRuntime interface { //nolint:interfacebloat
 	// SupportsKVM os whether the OCI runtime supports running containers
 	// without KVM separation
 	SupportsKVM() bool
+	// SupportsExternalUsernsRestore returns whether this runtime can create
+	// the restore user namespace itself and ask CRIU to join it.
+	SupportsExternalUsernsRestore() bool
 
 	// AttachSocketPath is the path to the socket to attach to a given
 	// container.

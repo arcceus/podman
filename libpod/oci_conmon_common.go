@@ -831,6 +831,12 @@ func (r *ConmonOCIRuntime) SupportsKVM() bool {
 	return r.supportsKVM
 }
 
+// SupportsExternalUsernsRestore checks if the OCI runtime supports creating a
+// user namespace for restore and passing it to CRIU via join-ns.
+func (r *ConmonOCIRuntime) SupportsExternalUsernsRestore() bool {
+	return crutils.CRRuntimeSupportsExternalUsernsRestore(r.path)
+}
+
 // AttachSocketPath is the path to a single container's attach socket.
 func (r *ConmonOCIRuntime) AttachSocketPath(ctr *Container) (string, error) {
 	if ctr == nil {
@@ -1106,6 +1112,9 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 			args = append(args, "--runtime-opt", "--file-locks")
 		}
 		if ctr.config.IDMappings.AutoUserNs {
+			if !r.SupportsExternalUsernsRestore() {
+				return 0, fmt.Errorf("configured runtime %q does not support restoring containers with automatic user namespaces: %w", r.path, define.ErrNotImplemented)
+			}
 			args = append(args, "--runtime-opt", "--external-userns")
 		}
 		if restoreOptions.Pod != "" {
